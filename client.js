@@ -17,7 +17,7 @@
  *   client bundle。对话存在 durable session log 里，刷新只是重新渲染。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-hot-restart',
+  id: 'dsh-hot-restart-row',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
