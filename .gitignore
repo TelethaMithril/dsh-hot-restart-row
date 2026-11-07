@@ -1,0 +1,10 @@
+# 运行时产物：宿主把客户端回执写进包目录（link 安装时就是这里），不该进仓库。
+report.json
+
+# 曾经的自测产物，防止误提交。
+selftest.json
+*.flag
+
+node_modules/
+.DS_Store
+Thumbs.db
