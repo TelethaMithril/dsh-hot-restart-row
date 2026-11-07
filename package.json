@@ -1,0 +1,53 @@
+{
+  "name": "dsh-hot-restart",
+  "version": "0.2.0",
+  "description": "Adds a Hot restart row under Sign out in the DSH account menu: reloads the profile plugin tree and refreshes the window, keeping the current conversation.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "author": "TelethaMithril",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TelethaMithril/dsh-hot-restart.git"
+  },
+  "homepage": "https://github.com/TelethaMithril/dsh-hot-restart#readme",
+  "bugs": {
+    "url": "https://github.com/TelethaMithril/dsh-hot-restart/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "hot-restart",
+    "reload"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    }
+  }
+}
