@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  把 dsh-hot-restart 推成 GitHub 仓库（可选顺手发 npm）。
+  把 dsh-hot-restart-row 推成 GitHub 仓库（可选顺手发 npm）。
 
 .DESCRIPTION
   等价于手工执行 git init / add / commit / remote / push。脚本只做这些事，
@@ -8,7 +8,7 @@
 
   上架到市场还需要两步人工操作（见 market/PUBLISH.md）：
     1. 仓库 Settings -> Topics 加 `dsh-plugin`
-    2. 给 awesome-dsh-plugin 提一个只加 data/plugins/TelethaMithril__dsh-hot-restart.yml 的 PR
+    2. 给 awesome-dsh-plugin 提一个只加 data/plugins/TelethaMithril__dsh-hot-restart-row.yml 的 PR
 
 .EXAMPLE
   pwsh -File market/publish.ps1
@@ -17,8 +17,8 @@
 [CmdletBinding()]
 param(
   [string]$Owner = 'TelethaMithril',
-  [string]$Repo = 'dsh-hot-restart',
-  [string]$Message = 'dsh-hot-restart: Hot restart row under Sign out',
+  [string]$Repo = 'dsh-hot-restart-row',
+  [string]$Message = 'dsh-hot-restart-row: Hot restart row under Sign out',
   [switch]$Npm
 )
 
@@ -71,5 +71,5 @@ if ($Npm) {
 Write-Host ''
 Write-Host '完成。还剩两步人工操作：'
 Write-Host "  1. 给 $Owner/$Repo 加 topic：dsh-plugin"
-Write-Host '  2. 给 awesome-dsh-plugin 提 PR：只加 data/plugins/TelethaMithril__dsh-hot-restart.yml'
+Write-Host '  2. 给 awesome-dsh-plugin 提 PR：只加 data/plugins/TelethaMithril__dsh-hot-restart-row.yml'
 Write-Host '详情见 market/PUBLISH.md'
