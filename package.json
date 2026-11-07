@@ -1,7 +1,7 @@
 {
-  "name": "dsh-hot-restart",
+  "name": "dsh-hot-restart-row",
   "version": "0.2.0",
-  "description": "Adds a Hot restart row under Sign out in the DSH account menu: reloads the profile plugin tree and refreshes the window, keeping the current conversation.",
+  "description": "Adds a Hot restart row under Sign out in the DSH account menu: reconciles the profile plugin tree in place and reloads the page, without restarting the DSH process or dropping the current conversation.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -21,11 +21,11 @@
   "author": "TelethaMithril",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TelethaMithril/dsh-hot-restart.git"
+    "url": "git+https://github.com/TelethaMithril/dsh-hot-restart-row.git"
   },
-  "homepage": "https://github.com/TelethaMithril/dsh-hot-restart#readme",
+  "homepage": "https://github.com/TelethaMithril/dsh-hot-restart-row#readme",
   "bugs": {
-    "url": "https://github.com/TelethaMithril/dsh-hot-restart/issues"
+    "url": "https://github.com/TelethaMithril/dsh-hot-restart-row/issues"
   },
   "keywords": [
     "dsh",
