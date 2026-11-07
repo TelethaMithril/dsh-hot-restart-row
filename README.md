@@ -1,8 +1,22 @@
-# dsh-hot-restart
+# dsh-hot-restart-row
 
 在**账号菜单**（侧边栏底部那张账号卡弹出的菜单）里、“退出登录”下面加一行 **热重启**。
 
 菜单原本是 `设置 / 意见反馈 / 退出登录` 三行；现在变成四行，第四行就是这只按钮。
+
+## 和市场上那个同名插件不是一回事
+
+列表里已经有一个 [`xiaolu511/dsh-hot-restart`](https://github.com/xiaolu511/dsh-hot-restart)
+（分类 `dev`）：它是 DSH 窗口里的一个固定按钮，点一下**把 DSH 关掉再自动重开**，右键还有内置自检。
+
+这一个（`dsh-hot-restart-row`）做的是另一件事：
+
+- **不杀进程、不重开窗口**：宿主只在自己的 Loader 树里重放 profile 的 patch（`hmr.reconcileProfile()`），
+  然后页面刷新一次；DSH 主进程 pid 不变，其它会话不受影响。
+- **落点在账号菜单里**（“退出登录”下面一行），不占窗口空间、不盖在任何内容上面。
+
+一句话：那个是**冷重启**（换掉整个进程），这个是**热重启**（换掉运行时、保留上下文）。
+两个都在列表里并不冲突——要重开进程的人用那个，改完插件想立刻生效、又不想丢正在跑的对话的人用这个。
 
 ## 它是怎么放进去的（为什么不是插槽）
 
@@ -65,11 +79,11 @@ profile 的 `package.json` / `cordis.patch.yml`）：
 | 操作 | 调用 |
 | --- | --- |
 | 安装 / 升级 | `plugin_manager` → `install_bundle`，`target` = 本目录的绝对路径 |
-| 停用 | `plugin_manager` → `set_bundle`，`target: dsh-hot-restart`，`enabled: false` |
-| 卸载 | `plugin_manager` → `remove_bundle`，`target: dsh-hot-restart` |
+| 停用 | `plugin_manager` → `set_bundle`，`target: dsh-hot-restart-row`，`enabled: false` |
+| 卸载 | `plugin_manager` → `remove_bundle`，`target: dsh-hot-restart-row` |
 
-安装是 pnpm 的**链接**安装：本目录就是 profile 里的那一份，改完文件按下热重启
-即生效，不需要重装。
+安装是 pnpm 的**链接**安装：本目录就是 profile 里的那一份（目录名仍是 `dsh-hot-restart`，
+包名是 `dsh-hot-restart-row`），改完文件按下热重启即生效，不需要重装。
 
 > 客户端代码是在页面加载时取一次 bundle 的。改完 `client.js` 之后要**手动刷新一次页面**
 > （Ctrl+R）才会用上新代码；宿主那一半则跟着插件重载立刻生效。
@@ -90,7 +104,7 @@ profile 的 `package.json` / `cordis.patch.yml`）：
 ## 已知边界
 
 - 按钮**不杀进程**：真正的冷启动（Electron `app.relaunch()`）没有对外 API，
-  强行做会中断当前会话且无法自测。
+  强行做会中断当前会话且无法自测。需要那个的时候用 `xiaolu511/dsh-hot-restart`。
 - 对账只管“声明的行”：它让 profile 的插件树与磁盘上的 patch 一致（增删行、改 config），
   不做模块级源码热替换 —— 源码改动的热重载是 `dsh-hmr` 的文件监视在做的那件事。
 - 对账是“尽力而为”：某个插件加载失败时，失败信息进 Host 日志与 `status` 的重启历史，
@@ -102,9 +116,9 @@ profile 的 `package.json` / `cordis.patch.yml`）：
 市场（[awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)）收录的是
 **GitHub 仓库 + 一个 YAML 条目**，不是压缩包：
 
-- 仓库：`https://github.com/TelethaMithril/dsh-hot-restart`（本目录就是仓库根）
-- 条目文件：`market/TelethaMithril__dsh-hot-restart.yml` → 提交到
-  `awesome-dsh-plugin` 仓库的 `data/plugins/TelethaMithril__dsh-hot-restart.yml`
+- 仓库：`https://github.com/TelethaMithril/dsh-hot-restart-row`（本目录就是仓库根）
+- 条目文件：`market/TelethaMithril__dsh-hot-restart-row.yml` → 提交到
+  `awesome-dsh-plugin` 仓库的 `data/plugins/TelethaMithril__dsh-hot-restart-row.yml`
 - 分类：`ui`
 
 本仓库满足收录硬条件：`package.json` 声明了 `dsh.bundle`（不只是 `dsh.client`）、
@@ -116,5 +130,5 @@ profile 的 `package.json` / `cordis.patch.yml`）：
 上架之后用户那边的安装命令形如：
 
 ```sh
-dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart#main"
+dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main"
 ```
