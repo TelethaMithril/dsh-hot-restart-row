@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Hot restart">
+  <rect width="32" height="32" rx="8" fill="#2F6BFF"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8.4 16a7.6 7.6 0 1 0 2.6-5.7"/>
+    <path d="M8.4 8.1v5.3h5.3"/>
+  </g>
+</svg>
