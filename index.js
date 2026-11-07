@@ -1,5 +1,5 @@
 /**
- * dsh-hot-restart —— 宿主那一半。
+ * dsh-hot-restart-row —— 宿主那一半。
  *
  * 作用：给界面上的"热重启"按钮提供一个真正的落点。DSH 没有"重启进程"的 API
  * （`agents` / `sessions` / `agentPresets` 都没有），但"热重启"能做的事情有两件，
@@ -151,7 +151,7 @@ function reply(res, status, body) {
 function statusPayload(ctx) {
   /** @type {Record<string, unknown>} */
   const payload = {
-    name: 'dsh-hot-restart',
+    name: 'dsh-hot-restart-row',
     version: VERSION,
     ok: true,
   }
