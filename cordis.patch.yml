@@ -1,4 +1,4 @@
-# dsh-hot-restart 的 bundle patch 层。
+# dsh-hot-restart-row 的 bundle patch 层。
 #
 # package.json 的 `dsh.bundle.patch` 指向本文件：DSH 的 loader 会把它插进 profile 的
 # 组合树（在 bundle 层之后、用户自己的 cordis.patch.yml 之前）。
@@ -10,5 +10,5 @@
 #   - `config` 是**整行替换**而不是深合并，所以这里不写 config：热重启按钮
 #     没有任何配置项，装了就该出现。
 - insert:
-    - id: dsh-hot-restart
-      name: dsh-hot-restart
+    - id: dsh-hot-restart-row
+      name: dsh-hot-restart-row
