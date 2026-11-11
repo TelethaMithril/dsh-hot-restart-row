@@ -68,6 +68,12 @@ DSH 没有“重启进程”的 API（`agents` / `sessions` / `agentPresets` 都
   浏览器会拿到断掉的连接，按钮会误报“失败”。
 - 对账必须套 `runExclusive`：`reconcileProfile()` 自己不加锁，直接调会抛
   `HMR profile reconciliation must run inside runExclusive`。
+- **刷新前等图稳定 + 预热 bundle**：对账会重启一批 fiber，`clientModules` 每收到一个内部
+  `plugin` 事件就重算一次图。页面若在这一代换代窗口里加载，会拿到上一代已经下线的 bundle
+  URL，启动阶段直接 `import failed`。所以宿主在 `reconcileProfile()` 之后先用
+  `settleGraph()` 等 `graph().rev` 连续 800ms 不变，再用 `warmBundles()` 把图里每个
+  bundle GET 一遍并读完（本机实测 86 个 bundle 约 99ms 全 200）。两步都成功才允许刷新；
+  否则按钮显示失败、页面不动——宁可让人再点一次，也不让页面带着 404 启动。
 - 按钮没有 React 状态可借，进度直接写在 `data-phase`（`idle / busy / failed`）+ 行文案上，
   失败 3 秒后回到 `idle`。
 
@@ -141,6 +147,7 @@ dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main
 
 ## 变更记录
 
+- **0.2.4** — 刷新前先等插件图稳定、并预热全部 client bundle；任何一步失败都不刷新页面。
 - **0.2.3** — 重启进度改挂 `globalThis`：对账过程中本模块若被重新 import，模块级变量会归零、客户端就永远等不到自己的 ticket；挂全局后重载也读得到。
 - **0.2.2** — 修掉一个会让 DSH 起不来的竞态：以前 `POST /restart` 回完 200，页面固定
   450ms 后就 `location.reload()`；如果对账还在跑（刚在市场装完插件时尤其容易，因为
