@@ -35,8 +35,8 @@ window.__ModuleLoader__.load({
     var ICON_PATHS =
       '<path d="M20.4 12a8.4 8.4 0 1 1-2.9-6.31"></path><path d="M20.4 4.3v5.1h-5.1"></path>'
 
-    /** 排查标记：模块体真的执行过（页面里应为 'v0.2.3'）。 */
-    window.__DSH_HOT_RESTART_CLIENT__ = 'v0.2.3'
+    /** 排查标记：模块体真的执行过（页面里应为 'v0.2.4'）。 */
+    window.__DSH_HOT_RESTART_CLIENT__ = 'v0.2.4'
 
     /**
      * 当前界面语言。
@@ -171,7 +171,7 @@ window.__ModuleLoader__.load({
       if (row === null || row.parentNode === null) return false
 
       var clone = /** @type {HTMLElement} */ (row.cloneNode(true))
-      clone.setAttribute(MENU_MARK, 'v0.2.0')
+      clone.setAttribute(MENU_MARK, 'v0.2.4')
       clone.removeAttribute('aria-haspopup')
       clone.removeAttribute('aria-expanded')
       clone.removeAttribute('aria-controls')
@@ -267,7 +267,7 @@ window.__ModuleLoader__.load({
           }
           var ticket = payload !== null && typeof payload === 'object' ? payload.ticket : undefined
           replaceRowText(row, pick(ctx, '正在重载插件…', 'Reloading plugins…'))
-          return waitForSettle(ticket, Date.now() + 30000)
+          return waitForSettle(ticket, Date.now() + 60000)
         })
         .then(function (run) {
           if (run !== null && run.ok === false) {
