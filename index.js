@@ -41,7 +41,7 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.0'
+export const VERSION = '0.2.3'
 
 /** 宿主进程启动后被本模块加载的时刻（≈ DSH 启动时间）。 */
 const loadedAt = Date.now()
@@ -50,6 +50,35 @@ const loadedAt = Date.now()
 const history = []
 /** 单次记录里最多记几条，够看就行，不做持久化。 */
 const HISTORY_LIMIT = 10
+
+/**
+ * 最近一次重启的进度，供客户端**等对账真的结束**再刷新页面。
+ *
+ * 为什么要这个：`POST /restart` 必须先把响应写出去（对账会重建本插件所在的
+ * fiber，先 await 再回响应的话浏览器只会拿到断连接）。但页面如果在对账跑完
+ * 之前就 `location.reload()`，重新拉 index.html 的那一瞬间 clientModules 的
+ * bundle 版本可能刚好被对账替换 —— 页面拿到的是旧 rev 的分包 URL，404 之后
+ * 整条 bundle 被跳过，启动阶段就会报 "N entries did not activate"。
+ * 所以客户端拿 ticket 轮询 `/status`，等 `finishedAt` 落定再刷新。
+ *
+ * 状态挂在 `globalThis` 上而不是模块作用域里：对账有可能把本模块重新 import
+ * 一次（那样模块级 `let` 会归零，客户端就永远等不到自己的 ticket，只能干等满
+ * 超时）。挂全局以后，重新 import 出来的新模块实例读到的还是同一份进度。
+ *
+ * @typedef {{ ticket: number, startedAt: number, finishedAt: number, ok: boolean | null, detail: unknown }} RestartRun
+ */
+const STATE_KEY = '__DSH_HOT_RESTART_STATE__'
+
+/**
+ * 取（必要时创建）进程级的重启状态。
+ * @returns {{ ticketSeq: number, lastRun: RestartRun | null }} 状态对象。
+ */
+function state() {
+  if (globalThis[STATE_KEY] === undefined) {
+    globalThis[STATE_KEY] = { ticketSeq: 0, lastRun: null }
+  }
+  return globalThis[STATE_KEY]
+}
 
 /**
  * 把任意抛出物变成一句人话。
@@ -91,29 +120,31 @@ function summarizeReconciliation(result) {
  * @param {boolean} ok 是否成功。
  * @param {number} tookMs 耗时。
  * @param {unknown} detail 结果或错误。
+ * @param {number} ticket 票号（与客户端轮询对得上）。
  */
-function record(ok, tookMs, detail) {
-  history.unshift({ at: Date.now(), ok, tookMs, detail })
+function record(ok, tookMs, detail, ticket) {
+  history.unshift({ at: Date.now(), ok, tookMs, detail, ticket })
   if (history.length > HISTORY_LIMIT) history.length = HISTORY_LIMIT
 }
 
 /**
  * 在后台把 profile 的 patch 重新对账进运行中的 Loader 树。
  * @param {import('@deepseek-ai/cordis').Context} ctx 插件上下文（已含 webServer 的子上下文）。
+ * @param {number} ticket 本次重启的票号。
  * @returns {Promise<void>} 对账结束后 resolve（失败也 resolve，错误记进 history）。
  */
-async function reconcileInBackground(ctx) {
+async function reconcileInBackground(ctx, ticket) {
   const beganAt = Date.now()
   /** @type {unknown} */
   let hmr
   try {
     hmr = ctx.get('hmr')
   } catch (error) {
-    record(false, Date.now() - beganAt, describe(error))
+    finish(ticket, false, Date.now() - beganAt, describe(error))
     return
   }
   if (hmr === undefined || hmr === null) {
-    record(false, Date.now() - beganAt, 'hmr service is unavailable in this profile')
+    finish(ticket, false, Date.now() - beganAt, 'hmr service is unavailable in this profile')
     return
   }
 
@@ -121,9 +152,27 @@ async function reconcileInBackground(ctx) {
     // `reconcileProfile()` 要求独占：多个插件同时触发对账会把 Loader 树撕成两半。
     // 它自己不会加锁，会直接抛 "must run inside runExclusive"，所以这里必须套一层。
     const result = await hmr.runExclusive(async () => await hmr.reconcileProfile())
-    record(true, Date.now() - beganAt, summarizeReconciliation(result))
+    finish(ticket, true, Date.now() - beganAt, summarizeReconciliation(result))
   } catch (error) {
-    record(false, Date.now() - beganAt, describe(error))
+    finish(ticket, false, Date.now() - beganAt, describe(error))
+  }
+}
+
+/**
+ * 收尾一次重启：同时写到历史和 `lastRun`（客户端据此决定何时刷新）。
+ * @param {number} ticket 票号。
+ * @param {boolean} ok 是否成功。
+ * @param {number} tookMs 耗时。
+ * @param {unknown} detail 结果或错误。
+ * @returns {void}
+ */
+function finish(ticket, ok, tookMs, detail) {
+  record(ok, tookMs, detail, ticket)
+  const current = state().lastRun
+  if (current !== null && current.ticket === ticket) {
+    current.ok = ok
+    current.detail = detail
+    current.finishedAt = Date.now()
   }
 }
 
@@ -188,6 +237,10 @@ function statusPayload(ctx) {
     count: history.length,
     recent: history.slice(0, HISTORY_LIMIT),
   }
+
+  // 客户端轮询用：`lastRun.finishedAt > 0` 才代表对账真的结束、bundle 版本已经稳定。
+  const current = state().lastRun
+  payload.lastRun = current === null ? null : { ...current }
 
   return payload
 }
@@ -278,23 +331,26 @@ export function apply(ctx) {
             }
 
             const at = Date.now()
+            const ticket = ++state().ticketSeq
+            state().lastRun = { ticket, startedAt: at, finishedAt: 0, ok: null, detail: null }
             try {
               reply(res, 200, {
                 ok: true,
                 accepted: true,
                 at,
+                ticket,
                 version: VERSION,
-                note: 'profile plugins will be reconciled in the background; the page reloads on the client side',
+                note: 'profile plugins will be reconciled in the background; poll /status until lastRun.finishedAt is set before reloading',
               })
             } catch (error) {
               // 响应都写不出去，就没有后续了。
-              record(false, Date.now() - at, describe(error))
+              finish(ticket, false, Date.now() - at, describe(error))
               return
             }
 
             // 放到下一个宏任务：先让响应写出去，再动 Loader 树。
             setTimeout(() => {
-              void reconcileInBackground(child)
+              void reconcileInBackground(child, ticket)
             }, 25)
           },
         }),
