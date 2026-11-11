@@ -1,6 +1,6 @@
 {
   "name": "dsh-hot-restart-row",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Adds a Hot restart row under Sign out in the DSH account menu: reconciles the profile plugin tree in place and reloads the page, without restarting the DSH process or dropping the current conversation.",
   "type": "module",
   "main": "index.js",
@@ -18,6 +18,9 @@
     "LICENSE"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "author": "TelethaMithril",
   "repository": {
     "type": "git",
