@@ -23,6 +23,8 @@ window.__ModuleLoader__.load({
     var exports = module.exports
 
     var RESTART_URL = '/dsh-hot-restart/restart'
+    /** 诊断路由：宿主在这里回 `lastRun`，客户端据此判断对账是否真的结束。 */
+    var STATUS_URL = '/dsh-hot-restart/status'
     /** 回执路由：宿主把它追加进包目录下的 report.json（没有浏览器时的排查手段）。 */
     var REPORT_URL = '/dsh-hot-restart/report'
     /** 注入行的标记属性（同时用来避免重复注入）。 */
@@ -33,8 +35,8 @@ window.__ModuleLoader__.load({
     var ICON_PATHS =
       '<path d="M20.4 12a8.4 8.4 0 1 1-2.9-6.31"></path><path d="M20.4 4.3v5.1h-5.1"></path>'
 
-    /** 排查标记：模块体真的执行过（页面里应为 'v0.2.0'）。 */
-    window.__DSH_HOT_RESTART_CLIENT__ = 'v0.2.0'
+    /** 排查标记：模块体真的执行过（页面里应为 'v0.2.3'）。 */
+    window.__DSH_HOT_RESTART_CLIENT__ = 'v0.2.3'
 
     /**
      * 当前界面语言。
@@ -200,7 +202,43 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 菜单行的点击处理：请求宿主对账，成功就刷新页面。
+     * 等宿主把这次对账真正跑完，再让页面刷新。
+     *
+     * 不能只等固定延时：对账会换掉 clientModules 的 bundle 版本，如果页面在版本
+     * 切换的中途重新加载，会拿到旧 rev 的分包 URL 而 404，启动阶段就会报
+     * "entries did not activate"（市场刚装完插件时对账可能排很久，尤其明显）。
+     * 所以轮询 `/status`，直到 `lastRun.finishedAt` 落定为止。
+     *
+     * @param {number|undefined} ticket 本次重启的票号（宿主在 POST 响应里给）。
+     * @param {number} deadline 最晚等到什么时候（毫秒时间戳）。
+     * @returns {Promise<any>} 对账结果；超时或一直读不到就返回 null。
+     */
+    function waitForSettle(ticket, deadline) {
+      function poll() {
+        if (Date.now() > deadline) return Promise.resolve(null)
+        return fetch(STATUS_URL, { cache: 'no-store' })
+          .then(function (res) {
+            return res.ok ? res.json() : null
+          })
+          .catch(function () {
+            return null
+          })
+          .then(function (payload) {
+            var run = payload !== null && typeof payload === 'object' ? payload.lastRun : null
+            if (run !== null && typeof run === 'object' && run.finishedAt > 0) {
+              // 票号对不上说明是别人触发的那一次，继续等自己的。
+              if (ticket === undefined || ticket === null || run.ticket === ticket) return run
+            }
+            return new Promise(function (resolve) {
+              window.setTimeout(resolve, 250)
+            }).then(poll)
+          })
+      }
+      return poll()
+    }
+
+    /**
+     * 菜单行的点击处理：请求宿主对账，等对账结束再刷新页面。
      * 没有 React 状态可借，直接用 `data-phase` + 文案表达进度。
      * @param {HTMLElement} row 注入的那一行。
      * @param {any} ctx 插件上下文。
@@ -227,10 +265,19 @@ window.__ModuleLoader__.load({
           if (payload !== null && typeof payload === 'object' && payload.error) {
             throw new Error(String(payload.error))
           }
+          var ticket = payload !== null && typeof payload === 'object' ? payload.ticket : undefined
+          replaceRowText(row, pick(ctx, '正在重载插件…', 'Reloading plugins…'))
+          return waitForSettle(ticket, Date.now() + 30000)
+        })
+        .then(function (run) {
+          if (run !== null && run.ok === false) {
+            throw new Error('reconcile failed: ' + String(run.detail))
+          }
           replaceRowText(row, pick(ctx, '正在刷新…', 'Reloading…'))
+          // 对账已结束，再给 clientModules 一点时间把新 bundle 注册完。
           window.setTimeout(function () {
             window.location.reload()
-          }, 450)
+          }, 320)
         })
         .catch(function (failure) {
           var message = (failure && failure.message) || String(failure)
