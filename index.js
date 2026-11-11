@@ -41,7 +41,7 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.3'
+export const VERSION = '0.2.4'
 
 /** 宿主进程启动后被本模块加载的时刻（≈ DSH 启动时间）。 */
 const loadedAt = Date.now()
@@ -128,6 +128,74 @@ function record(ok, tookMs, detail, ticket) {
 }
 
 /**
+ * 等 clientModules 的 graph 稳定下来。
+ *
+ * 对账会重启一批 fiber，clientModules 每收到一个内部 plugin 事件就重算一次图；
+ * 图在抖动的这段窗口里，index.html 里写的 rev 和真正被请求的 bundle 可能对不上，
+ * 页面就会在启动阶段找不到某个条目。所以刷新页面前必须等它安静下来。
+ * @param {any} clientModules clientModules 服务。
+ * @param {number} quietMs 连续多久不变化算稳定。
+ * @param {number} timeoutMs 最长等多久。
+ * @returns {Promise<{ rev: string, stable: boolean, waitedMs: number }>} 稳定结果。
+ */
+async function settleGraph(clientModules, quietMs, timeoutMs) {
+  const beganAt = Date.now()
+  const deadline = beganAt + timeoutMs
+  let rev = String(clientModules.graph().rev ?? '')
+  let since = Date.now()
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    let current = rev
+    try {
+      current = String(clientModules.graph().rev ?? '')
+    } catch {
+      // 读不到就当没变化。
+    }
+    if (current !== rev) {
+      rev = current
+      since = Date.now()
+      continue
+    }
+    if (Date.now() - since >= quietMs) return { rev, stable: true, waitedMs: Date.now() - beganAt }
+  }
+  return { rev, stable: false, waitedMs: Date.now() - beganAt }
+}
+
+/**
+ * 把页面接下来一定会请求的 bundle 先烘出来（每个 bundle 首次 GET 时才会构建）。
+ * 全部成功才允许刷新页面：宁可报错不刷新，也不要让页面带着 404 启动失败。
+ * @param {any} clientModules clientModules 服务。
+ * @returns {Promise<{ total: number, ok: number, failed: Array<Record<string, unknown>> }>} 结果。
+ */
+async function warmBundles(clientModules) {
+  /** @type {Array<any>} */
+  let rows = []
+  try {
+    rows = Array.isArray(clientModules.graph().entries) ? clientModules.graph().entries : []
+  } catch {
+    rows = []
+  }
+  const failed = []
+  let ok = 0
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object' || typeof row.url !== 'string') continue
+    try {
+      const response = await clientModules.fetchBundle({
+        method: 'GET',
+        url: row.url,
+        headers: new Headers(),
+      })
+      const text = await response.text()
+      if (response.status === 200 && text.length > 0) ok += 1
+      else failed.push({ id: row.id, status: response.status })
+    } catch (error) {
+      failed.push({ id: row.id, error: describe(error) })
+    }
+  }
+  return { total: rows.length, ok, failed }
+}
+
+/**
  * 在后台把 profile 的 patch 重新对账进运行中的 Loader 树。
  * @param {import('@deepseek-ai/cordis').Context} ctx 插件上下文（已含 webServer 的子上下文）。
  * @param {number} ticket 本次重启的票号。
@@ -152,7 +220,37 @@ async function reconcileInBackground(ctx, ticket) {
     // `reconcileProfile()` 要求独占：多个插件同时触发对账会把 Loader 树撕成两半。
     // 它自己不会加锁，会直接抛 "must run inside runExclusive"，所以这里必须套一层。
     const result = await hmr.runExclusive(async () => await hmr.reconcileProfile())
-    finish(ticket, true, Date.now() - beganAt, summarizeReconciliation(result))
+
+    /** @type {any} */
+    let clientModules
+    try {
+      clientModules = ctx.get('clientModules')
+    } catch {
+      clientModules = undefined
+    }
+
+    if (clientModules === undefined || clientModules === null) {
+      finish(ticket, true, Date.now() - beganAt, summarizeReconciliation(result))
+      return
+    }
+
+    // 关键：对账会重启一批 fiber，clientModules 的图会抖动一阵；页面必须等它安静，
+    // 并且先把 bundle 烘好，否则刷新后会带着 404 启动失败（web boot: entry did not activate）。
+    const settled = await settleGraph(clientModules, 800, 20000)
+    const warm = await warmBundles(clientModules)
+
+    /** @type {Record<string, unknown>} */
+    const detail = {
+      reconciliation: summarizeReconciliation(result),
+      graph: settled,
+      warm: { total: warm.total, ok: warm.ok, failed: warm.failed.slice(0, 8) },
+    }
+
+    if (warm.failed.length > 0 || settled.stable === false) {
+      finish(ticket, false, Date.now() - beganAt, detail)
+      return
+    }
+    finish(ticket, true, Date.now() - beganAt, detail)
   } catch (error) {
     finish(ticket, false, Date.now() - beganAt, describe(error))
   }
