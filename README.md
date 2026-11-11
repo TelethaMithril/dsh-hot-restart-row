@@ -85,6 +85,12 @@ profile 的 `package.json` / `cordis.patch.yml`）：
 安装是 pnpm 的**链接**安装：本目录就是 profile 里的那一份（目录名仍是 `dsh-hot-restart`，
 包名是 `dsh-hot-restart-row`），改完文件按下热重启即生效，不需要重装。
 
+这个包也发布在 npm 上（`dsh-hot-restart-row@0.2.0`），别的机器可以直接装：
+
+```sh
+dsh plugin --profile desktop add dsh-hot-restart-row
+```
+
 > 客户端代码是在页面加载时取一次 bundle 的。改完 `client.js` 之后要**手动刷新一次页面**
 > （Ctrl+R）才会用上新代码；宿主那一半则跟着插件重载立刻生效。
 
@@ -132,3 +138,15 @@ profile 的 `package.json` / `cordis.patch.yml`）：
 ```sh
 dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main"
 ```
+
+## 变更记录
+
+- **0.2.3** — 重启进度改挂 `globalThis`：对账过程中本模块若被重新 import，模块级变量会归零、客户端就永远等不到自己的 ticket；挂全局后重载也读得到。
+- **0.2.2** — 修掉一个会让 DSH 起不来的竞态：以前 `POST /restart` 回完 200，页面固定
+  450ms 后就 `location.reload()`；如果对账还在跑（刚在市场装完插件时尤其容易，因为
+  要排在 plugin-manager 自己的对账后面），页面会在 clientModules 换 bundle 版本的中途
+  加载，拿到旧 `rev` 的分包 URL 直接 404，启动阶段就会报
+  `web boot: N entries did not activate`（日志里是 `bundle script ... failed to load`）。
+  现在宿主给每次重启发一个 `ticket` 写进 `lastRun`，客户端轮询 `/status` 等
+  `lastRun.finishedAt` 落定再刷新，超时 30s。
+- **0.2.0** — 按钮改到账号菜单“退出登录”下面（DOM 注入），侧边栏按钮移除。
