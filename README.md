@@ -57,14 +57,13 @@ DSH 没有“重启进程”的 API（`agents` / `sessions` / `agentPresets` 都
 | GET | `/dsh-hot-restart/status` | 诊断 JSON：pid / 运行时长 / Node 与 Electron 版本 / profile 路径 / 活 agent / 最近重启历史 |
 | GET, POST | `/dsh-hot-restart/restart` | 触发热重启：立即回 200，随后在后台对账插件树 |
 | POST | `/dsh-hot-restart/report` | 客户端回执：把页面上注入到的行（`outerHTML`）落进包内的 `report.json` |
-| GET | `/dsh-hot-restart/diagnose` | 只读诊断：我们这条 client 行在宿主图里的 `rev`/`url`，以及 `fetchBundle` 取回来的 bundle 状态、长度、能否解析、是否注册了正确 id |
 
 排查时直接开 `http://127.0.0.1:<port>/dsh-hot-restart/status` 即可。
 
 ## 实现要点
 
-- 零依赖、纯 JS、**无构建步骤**：`index.js`（ES module，宿主）+ `client.js`
-  （`__ModuleLoader__` 懒 CJS，客户端）。
+- 零依赖、纯 JS、**无构建步骤**：`index.js`（ES module，宿主）+ `runtime/menu.js`
+  （普通 IIFE，被宿主读出来、由 `tapIndex` 插进 index.html）。
 - **先回响应、再对账**：对账会把本插件所在 fiber 重新评估一遍，先 `await` 再回响应的话
   浏览器会拿到断掉的连接，按钮会误报“失败”。
 - 对账必须套 `runExclusive`：`reconcileProfile()` 自己不加锁，直接调会抛
@@ -81,6 +80,10 @@ DSH 没有“重启进程”的 API（`agents` / `sessions` / `agentPresets` 都
   它用捕获阶段的 `error` 监听接住任何 `/plugins/…` 分包的加载失败，然后重载页面
   （新页面拿的是当前 rev）。`sessionStorage` 计数限流 2 次/60 秒，避免真坏掉时无限刷新；
   每次触发都会往 `POST /dsh-hot-restart/report` 记一条 `kind: "boot-guard"`。
+- **不再做 client 插件**（0.2.7）：`dsh.client` 的入口在 DSH 的启动关键路径上
+  （`entries.start` 里任何一个条目没激活，整窗就报 `web boot: N entries did not activate`）。
+  这一半只负责一行菜单，不值得拥有让界面起不来的权力 —— 所以宿主在 `tapIndex` 里把
+  `runtime/menu.js` 作为普通行内脚本注入 `</body>` 之前，页面必然执行它，出问题最多少一行按钮。
 
 ## 安装
 
@@ -151,6 +154,14 @@ dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main
 ```
 
 ## 变更记录
+
+- **0.2.7** — 删掉 `dsh.client` 半边，把菜单代码挪到 `runtime/menu.js`，由宿主用
+  `webServer.tapIndex()` 作为普通行内脚本注入 `</body>` 之前。原因：client 条目在
+  DSH 启动关键路径上，`entries.start` 里只要有一个条目没立起来，整窗就弹
+  「应用无法启动」（现象是 `dsh-hot-restart-row: import failed (see console for the import error)`，
+  而且 `importError` 为空 —— 说明 bundle 没坏，是启动时序）。改成注入脚本后，本插件
+  在任何情况下都不可能再让 web boot 失败；代价只是注入失败时菜单里少一行。
+  同时删掉 0.2.6 期间的只读诊断路由 `/dsh-hot-restart/diagnose`。
 
 - **0.2.6** — 两处“宁可少个按钮，也不能让整窗起不来”的加固：
   ① 宿主装配（`activate`）整段包了 try/catch，出错只写进 `report.json` 并由 `/status` 的
