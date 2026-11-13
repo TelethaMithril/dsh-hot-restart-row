@@ -41,7 +41,10 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.4'
+export const VERSION = '0.2.5'
+
+/** 注入到 index.html 的自愈脚本的标记，用来判断是否已经注过。 */
+export const BOOT_GUARD_MARK = 'data-dsh-hot-restart-boot-guard'
 
 /** 宿主进程启动后被本模块加载的时刻（≈ DSH 启动时间）。 */
 const loadedAt = Date.now()
@@ -340,6 +343,9 @@ function statusPayload(ctx) {
   const current = state().lastRun
   payload.lastRun = current === null ? null : { ...current }
 
+  // 自愈脚本是否已经在首页里露过面（宿主要渲染过一次 index.html 才为 true）。
+  payload.bootGuard = { injected: didReportGuard }
+
   return payload
 }
 
@@ -389,6 +395,105 @@ function readBody(req, limit) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
+}
+
+/**
+ * 自愈脚本：盯住 `/plugins/…&rev=…` 的分包脚本加载失败。
+ *
+ * 为什么需要它：clientModules 的图每次对被对账都会换 rev，而它只保留「当前」
+ * 与「上一代」两批响应。页面如果在图连续换代几次的空隙里开始加载（典型场景：
+ * 市场刚装完插件就自己 `location.reload()`，后台还在跑自己的对账），拿到的是
+ * 已经不在响应表里的旧 rev URL —— 404 之后 loader 会把整个 bundle 标记为
+ * `skipped after an earlier failure of this bundle`，启动阶段就报
+ * “N entries did not activate”，DSH 直接弹「应用无法启动」。
+ *
+ * 这个脚本在 head 里最先执行（经典脚本，早于 deferred 的入口模块），用捕获阶段
+ * 的 error 监听接住分包脚本的加载失败，然后**带着当前 rev 重新载入一次页面**。
+ * 用 sessionStorage 计数限流：60 秒内最多 2 次，之后交回给 DSH 自己的报错，
+ * 避免真坏掉时无限刷新。
+ */
+const BOOT_GUARD_SCRIPT = `(function () {
+  if (window.__DSH_HR_BOOT_GUARD__) return
+  window.__DSH_HR_BOOT_GUARD__ = true
+  var KEY = 'dsh-hot-restart:boot-retry'
+  var LIMIT = 2
+  var WINDOW_MS = 60000
+  var failed = false
+  function read() {
+    try {
+      var raw = sessionStorage.getItem(KEY)
+      if (!raw) return { count: 0, at: 0 }
+      var value = JSON.parse(raw)
+      return { count: Number(value && value.count) || 0, at: Number(value && value.at) || 0 }
+    } catch (error) {
+      return { count: 0, at: 0 }
+    }
+  }
+  function write(value) {
+    try { sessionStorage.setItem(KEY, JSON.stringify(value)) } catch (error) {}
+  }
+  function report(src) {
+    try {
+      fetch('/dsh-hot-restart/report', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'boot-guard', at: new Date().toISOString(), src: String(src).slice(0, 500), href: location.href })
+      }).catch(function () {})
+    } catch (error) {}
+  }
+  window.addEventListener('error', function (event) {
+    var el = event && event.target
+    if (!el || el === window || el === document || el.tagName !== 'SCRIPT') return
+    var src = ''
+    try { src = String(el.getAttribute('src') || el.src || '') } catch (error) { return }
+    if (src.indexOf('/plugins/') === -1) return
+    failed = true
+    var now = Date.now()
+    var state = read()
+    if (state.count > 0 && now - state.at > WINDOW_MS) state = { count: 0, at: 0 }
+    if (state.count >= LIMIT) return
+    var next = { count: state.count + 1, at: now }
+    write(next)
+    report(src)
+    setTimeout(function () { location.reload() }, 600 + next.count * 400)
+  }, true)
+  window.addEventListener('load', function () {
+    if (failed) return
+    setTimeout(function () { write({ count: 0, at: 0 }) }, 15000)
+  })
+})()`
+
+let didReportGuard = false
+
+/**
+ * 把自愈脚本插进 index.html 的 `</head>` 之前（已插过就原样返回）。
+ * @param {string} html 渲染好的首页。
+ * @returns {string} 注入后的首页。
+ */
+export function injectBootGuard(html) {
+  if (typeof html !== 'string' || html.length === 0) return html
+  if (html.includes(BOOT_GUARD_MARK)) return html
+  const tag = `<script ${BOOT_GUARD_MARK}="1">${BOOT_GUARD_SCRIPT}</script>`
+  // 优先紧跟 <head>：经典脚本在解析时立刻执行，比 deferred 的入口模块更早装好监听。
+  const head = /<head\b[^>]*>/i.exec(html)
+  let next
+  if (head !== null) {
+    const at = head.index + head[0].length
+    next = `${html.slice(0, at)}${tag}${html.slice(at)}`
+  } else {
+    const end = html.search(/<\/head>/i)
+    next = end === -1 ? `${tag}${html}` : `${html.slice(0, end)}${tag}${html.slice(end)}`
+  }
+  if (!didReportGuard) {
+    didReportGuard = true
+    try {
+      appendReport({ receivedAt: new Date().toISOString(), payload: { kind: 'boot-guard-injected', version: VERSION } })
+    } catch {
+      // 落盘失败不影响页面。
+    }
+  }
+  return next
 }
 
 /**
@@ -475,6 +580,9 @@ export function apply(ctx) {
           },
         }),
       )
+
+      // ── 自愈：把 head 脚本注入首页，分包 404 时带新 rev 自动重载一次 ──
+      disposers.push(child.webServer.tapIndex(injectBootGuard))
 
       return () => {
         for (const dispose of disposers) dispose()
