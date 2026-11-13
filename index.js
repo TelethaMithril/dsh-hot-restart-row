@@ -41,7 +41,7 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.5'
+export const VERSION = '0.2.6'
 
 /** 注入到 index.html 的自愈脚本的标记，用来判断是否已经注过。 */
 export const BOOT_GUARD_MARK = 'data-dsh-hot-restart-boot-guard'
@@ -346,6 +346,9 @@ function statusPayload(ctx) {
   // 自愈脚本是否已经在首页里露过面（宿主要渲染过一次 index.html 才为 true）。
   payload.bootGuard = { injected: didReportGuard }
 
+  // 非空说明这次装配抛过错（插件仍然被加载，只是可能缺路由）。
+  payload.activationError = activationError
+
   return payload
 }
 
@@ -370,6 +373,31 @@ function appendReport(entry) {
   // 只留最近 40 条：这是排查用的,不是日志系统。
   if (list.length > 40) list.splice(0, list.length - 40)
   fs.writeFileSync(REPORT_FILE, JSON.stringify(list, null, 2), 'utf8')
+}
+
+/** 装配期抛出的错误（有的话由 /status 暴露，页面仍能启动）。 */
+let activationError = null
+
+/**
+ * 记录装配失败：既写报告，也留给 /status。
+ * @param {unknown} error 抛出来的东西。
+ * @returns {void}
+ */
+function reportActivationError(error) {
+  activationError = describe(error)
+  try {
+    appendReport({
+      receivedAt: new Date().toISOString(),
+      payload: {
+        kind: 'host-activate-failed',
+        version: VERSION,
+        error: activationError,
+        stack: String(error && error.stack ? error.stack : '').slice(0, 4000),
+      },
+    })
+  } catch {
+    // 报告写不进去也只能算了。
+  }
 }
 
 /**
@@ -449,18 +477,48 @@ const BOOT_GUARD_SCRIPT = `(function () {
     try { src = String(el.getAttribute('src') || el.src || '') } catch (error) { return }
     if (src.indexOf('/plugins/') === -1) return
     failed = true
+    report(src)
+    retry(false)
+  }, true)
+  // 分包没报错、但启动仍然失败时（比如 manifest 与图换代错位），页面会停在
+  // 「应用无法启动」的提示上。这种时候也要自愈：带一次 cache-buster 重载。
+  function looksFatal() {
+    try {
+      var text = String((document.body && document.body.innerText) || '')
+      if (text.length === 0) return false
+      return text.indexOf('did not activate') !== -1 || text.indexOf('无法使用') !== -1 || text.indexOf('无法启动') !== -1
+    } catch (error) {
+      return false
+    }
+  }
+  function retry(bust) {
     var now = Date.now()
     var state = read()
     if (state.count > 0 && now - state.at > WINDOW_MS) state = { count: 0, at: 0 }
-    if (state.count >= LIMIT) return
+    if (state.count >= LIMIT) return false
     var next = { count: state.count + 1, at: now }
     write(next)
-    report(src)
-    setTimeout(function () { location.reload() }, 600 + next.count * 400)
-  }, true)
+    setTimeout(function () {
+      if (!bust) {
+        location.reload()
+        return
+      }
+      try {
+        var url = new URL(location.href)
+        url.searchParams.set('hr-bust', String(now))
+        location.replace(url.toString())
+      } catch (error) {
+        location.reload()
+      }
+    }, 600 + next.count * 400)
+    return true
+  }
   window.addEventListener('load', function () {
     if (failed) return
-    setTimeout(function () { write({ count: 0, at: 0 }) }, 15000)
+    setTimeout(function () {
+      if (looksFatal() && retry(true)) return
+      write({ count: 0, at: 0 })
+    }, 1500)
   })
 })()`
 
@@ -501,10 +559,32 @@ export function injectBootGuard(html) {
  * @param {import('@deepseek-ai/cordis').Context} ctx 插件上下文。
  */
 export function apply(ctx) {
-  ctx.inject(['webServer'], (child) => {
-    child.effect(() => {
-      /** @type {Array<() => void>} */
-      const disposers = []
+  try {
+    ctx.inject(['webServer'], (child) => {
+      child.effect(() => {
+        try {
+          return activate(child)
+        } catch (error) {
+          reportActivationError(error)
+          return () => {}
+        }
+      })
+    })
+  } catch (error) {
+    reportActivationError(error)
+  }
+}
+
+/**
+ * 真正的装配：注册路由、注入首页自愈脚本。
+ * 任何一步抛错都只上报、不向上冒泡 —— 装配失败的插件会让 DSH 在启动阶段报
+ * “entries did not activate”，整窗弹「应用无法启动」，代价远大于少一个按钮。
+ * @param {any} child 带 webServer 的子上下文。
+ * @returns {() => void} 清理函数。
+ */
+function activate(child) {
+  /** @type {Array<() => void>} */
+  const disposers = []
 
       // ── 诊断：浏览器地址栏直接敲也能看 ──
       disposers.push(
@@ -584,9 +664,74 @@ export function apply(ctx) {
       // ── 自愈：把 head 脚本注入首页，分包 404 时带新 rev 自动重载一次 ──
       disposers.push(child.webServer.tapIndex(injectBootGuard))
 
-      return () => {
-        for (const dispose of disposers) dispose()
+      // ── 诊断：自报我们的 client 行在宿主图里长什么样、能不能取到 ──
+      disposers.push(
+        child.webServer.register({
+          kind: 'exact',
+          path: `${ROUTE_PREFIX}/diagnose`,
+          handler: (req, res) => {
+            void diagnoseRoute(child, res)
+          },
+        }),
+      )
+
+  return () => {
+    for (const dispose of disposers) dispose()
+  }
+}
+
+/**
+ * `GET /dsh-hot-restart/diagnose` 的实现：把我们这条 client 行在图里的样子、
+ * 以及宿主侧能不能取到它的 bundle 打出来。
+ * @param {any} child 带 webServer 的子上下文。
+ * @param {import('node:http').ServerResponse} res 响应。
+ * @returns {Promise<void>}
+ */
+async function diagnoseRoute(child, res) {
+  const name = 'dsh-hot-restart-row'
+  const out = { version: VERSION, rows: [], bundle: null }
+  try {
+    const cm = child.get('clientModules')
+    if (cm === undefined) {
+      reply(res, 200, { ...out, error: 'clientModules unavailable' })
+      return
+    }
+    const graph = cm.graph()
+    out.rev = graph.rev
+    out.release = graph.release
+    out.rows = (graph.entries ?? [])
+      .filter((row) => String(row.id).includes('hot-restart'))
+      .map((row) => ({ id: row.id, rev: row.rev, url: row.url, immediately: row.immediately }))
+    const row = (graph.entries ?? []).find((entry) => entry.id === name)
+    if (row === undefined) {
+      out.bundle = { found: false }
+    } else {
+      const response = await cm.fetchBundle({ method: 'GET', url: row.url, headers: new Headers() })
+      const text = await response.text()
+      let parses = true
+      let parseError = null
+      try {
+        new Function(text)
+      } catch (error) {
+        parses = false
+        parseError = describe(error)
       }
-    })
-  })
+      out.bundle = {
+        found: true,
+        status: response.status,
+        length: text.length,
+        registersId: text.includes(`'${name}'`) || text.includes(`"${name}"`),
+        parses,
+        parseError,
+        head: text.slice(0, 300),
+      }
+    }
+    reply(res, 200, out)
+  } catch (error) {
+    try {
+      reply(res, 500, { ...out, ok: false, error: describe(error), stack: String(error && error.stack ? error.stack : '').slice(0, 1200) })
+    } catch {
+      // 响应已发出。
+    }
+  }
 }
