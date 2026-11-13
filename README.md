@@ -151,6 +151,14 @@ dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main
 
 ## 变更记录
 
+- **0.2.6** — 两处“宁可少个按钮，也不能让整窗起不来”的加固：
+  ① 宿主装配（`activate`）整段包了 try/catch，出错只写进 `report.json` 并由 `/status` 的
+  `activationError` 暴露，不再把异常抛回 Loader（那会让 DSH 报 `entries did not activate`
+  并弹「应用无法启动」）；② 客户端 `apply` 同样兜底，并且启动时会先发一条
+  `{"kind":"client-apply","version":…}` 回执 —— 下次再出问题，报告里有没有这一条就能
+  立刻区分“模块没加载”还是“加载了但别处挂了”。
+  另外首页自愈脚本新增“启动失败屏”检测：分包没报错、但页面停在
+  「应用无法启动 / did not activate」时，带一次 `?hr-bust=` 重载（同一套 60 秒 2 次限流）。
 - **0.2.5** — 首页注入一段自愈脚本：`/plugins/…&rev=…` 的分包脚本加载失败时，
   带当前 rev 自动重载一次（`sessionStorage` 限流：60 秒内最多 2 次，之后交回 DSH 自己的报错）。
   这一条不依赖本插件的按钮 —— 市场装完插件后自己的 `location.reload()`、或任何插件
