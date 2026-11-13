@@ -1,17 +1,16 @@
 {
   "name": "dsh-hot-restart-row",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Adds a Hot restart row under Sign out in the DSH account menu: reconciles the profile plugin tree in place and reloads the page, without restarting the DSH process or dropping the current conversation.",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./client": "./client.js",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
-    "client.js",
+    "runtime/menu.js",
     "cordis.patch.yml",
     "icon.svg",
     "README.md",
@@ -44,13 +43,6 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "immediately": true,
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime"
-      ]
     }
   }
 }
