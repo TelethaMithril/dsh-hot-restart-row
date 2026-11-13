@@ -35,8 +35,11 @@ window.__ModuleLoader__.load({
     var ICON_PATHS =
       '<path d="M20.4 12a8.4 8.4 0 1 1-2.9-6.31"></path><path d="M20.4 4.3v5.1h-5.1"></path>'
 
-    /** 排查标记：模块体真的执行过（页面里应为 'v0.2.4'）。 */
-    window.__DSH_HOT_RESTART_CLIENT__ = 'v0.2.5'
+    /** 这一半的版本号（也用来给回执打标）。 */
+    var CLIENT_VERSION = 'v0.2.6'
+
+    /** 排查标记：模块体真的执行过（页面里应为 'v0.2.6'）。 */
+    window.__DSH_HOT_RESTART_CLIENT__ = CLIENT_VERSION
 
     /**
      * 当前界面语言。
@@ -171,7 +174,7 @@ window.__ModuleLoader__.load({
       if (row === null || row.parentNode === null) return false
 
       var clone = /** @type {HTMLElement} */ (row.cloneNode(true))
-      clone.setAttribute(MENU_MARK, 'v0.2.5')
+      clone.setAttribute(MENU_MARK, CLIENT_VERSION)
       clone.removeAttribute('aria-haspopup')
       clone.removeAttribute('aria-expanded')
       clone.removeAttribute('aria-controls')
@@ -325,7 +328,15 @@ window.__ModuleLoader__.load({
      * @returns {void}
      */
     function apply(ctx) {
-      watchAccountMenu(ctx)
+      // 先把“我起来了”报给宿主：启动失败时，报告里有没有这一条能直接区分
+      // “模块没加载”还是“加载了但别的东西挂了”。
+      report({ kind: 'client-apply', at: Date.now(), version: CLIENT_VERSION, href: String(location.href) })
+      try {
+        watchAccountMenu(ctx)
+      } catch (error) {
+        // 客户端这一半绝不让启动流程失败：按钮没了可以接受，整窗起不来不行。
+        report({ kind: 'client-apply-failed', at: Date.now(), version: CLIENT_VERSION, error: String((error && error.message) || error) })
+      }
     }
 
     exports.apply = apply
