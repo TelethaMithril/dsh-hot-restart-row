@@ -41,10 +41,30 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.6'
+export const VERSION = '0.2.7'
 
 /** 注入到 index.html 的自愈脚本的标记，用来判断是否已经注过。 */
 export const BOOT_GUARD_MARK = 'data-dsh-hot-restart-boot-guard'
+
+/** 注入到 index.html 的菜单脚本的标记（脚本本身在 runtime/menu.js）。 */
+export const MENU_SCRIPT_MARK = 'data-dsh-hot-restart-menu'
+
+/**
+ * 菜单脚本的源码：启动时读一次，之后每次渲染首页都用同一份。
+ *
+ * 读不到也不能让插件挂掉 —— 那只是少一行按钮。
+ * @returns {string}
+ */
+function readMenuScript() {
+  try {
+    return fs.readFileSync(new URL('./runtime/menu.js', import.meta.url), 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+/** 页面那一半的源码。 */
+const MENU_SCRIPT = readMenuScript()
 
 /** 宿主进程启动后被本模块加载的时刻（≈ DSH 启动时间）。 */
 const loadedAt = Date.now()
@@ -555,6 +575,24 @@ export function injectBootGuard(html) {
 }
 
 /**
+ * 把菜单脚本插进 index.html 的 `</body>` 之前（已插过就原样返回）。
+ *
+ * 为什么走 tapIndex 而不是 `dsh.client`：client 入口是启动关键路径，任何一个
+ * 条目没激活，DSH 就整窗报「应用无法启动」。这一半只负责一行菜单，不该有那个
+ * 权力。行内经典脚本必然执行，出错也只是少一行按钮。
+ * @param {string} html 渲染好的首页。
+ * @returns {string} 注入后的首页。
+ */
+export function injectMenuScript(html) {
+  if (typeof html !== 'string' || html.length === 0) return html
+  if (html.includes(MENU_SCRIPT_MARK)) return html
+  if (MENU_SCRIPT.length === 0) return html
+  const tag = `<script ${MENU_SCRIPT_MARK}="1">\n${MENU_SCRIPT}\n</script>`
+  const end = html.search(/<\/body>/i)
+  return end === -1 ? `${html}${tag}` : `${html.slice(0, end)}${tag}${html.slice(end)}`
+}
+
+/**
  * 插件主体。
  * @param {import('@deepseek-ai/cordis').Context} ctx 插件上下文。
  */
@@ -664,74 +702,10 @@ function activate(child) {
       // ── 自愈：把 head 脚本注入首页，分包 404 时带新 rev 自动重载一次 ──
       disposers.push(child.webServer.tapIndex(injectBootGuard))
 
-      // ── 诊断：自报我们的 client 行在宿主图里长什么样、能不能取到 ──
-      disposers.push(
-        child.webServer.register({
-          kind: 'exact',
-          path: `${ROUTE_PREFIX}/diagnose`,
-          handler: (req, res) => {
-            void diagnoseRoute(child, res)
-          },
-        }),
-      )
+      // ── 菜单：把页面上那一半边直接注入首页（不走 client 模块加载器） ──
+      disposers.push(child.webServer.tapIndex(injectMenuScript))
 
   return () => {
     for (const dispose of disposers) dispose()
-  }
-}
-
-/**
- * `GET /dsh-hot-restart/diagnose` 的实现：把我们这条 client 行在图里的样子、
- * 以及宿主侧能不能取到它的 bundle 打出来。
- * @param {any} child 带 webServer 的子上下文。
- * @param {import('node:http').ServerResponse} res 响应。
- * @returns {Promise<void>}
- */
-async function diagnoseRoute(child, res) {
-  const name = 'dsh-hot-restart-row'
-  const out = { version: VERSION, rows: [], bundle: null }
-  try {
-    const cm = child.get('clientModules')
-    if (cm === undefined) {
-      reply(res, 200, { ...out, error: 'clientModules unavailable' })
-      return
-    }
-    const graph = cm.graph()
-    out.rev = graph.rev
-    out.release = graph.release
-    out.rows = (graph.entries ?? [])
-      .filter((row) => String(row.id).includes('hot-restart'))
-      .map((row) => ({ id: row.id, rev: row.rev, url: row.url, immediately: row.immediately }))
-    const row = (graph.entries ?? []).find((entry) => entry.id === name)
-    if (row === undefined) {
-      out.bundle = { found: false }
-    } else {
-      const response = await cm.fetchBundle({ method: 'GET', url: row.url, headers: new Headers() })
-      const text = await response.text()
-      let parses = true
-      let parseError = null
-      try {
-        new Function(text)
-      } catch (error) {
-        parses = false
-        parseError = describe(error)
-      }
-      out.bundle = {
-        found: true,
-        status: response.status,
-        length: text.length,
-        registersId: text.includes(`'${name}'`) || text.includes(`"${name}"`),
-        parses,
-        parseError,
-        head: text.slice(0, 300),
-      }
-    }
-    reply(res, 200, out)
-  } catch (error) {
-    try {
-      reply(res, 500, { ...out, ok: false, error: describe(error), stack: String(error && error.stack ? error.stack : '').slice(0, 1200) })
-    } catch {
-      // 响应已发出。
-    }
   }
 }
