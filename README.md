@@ -57,6 +57,7 @@ DSH 没有“重启进程”的 API（`agents` / `sessions` / `agentPresets` 都
 | GET | `/dsh-hot-restart/status` | 诊断 JSON：pid / 运行时长 / Node 与 Electron 版本 / profile 路径 / 活 agent / 最近重启历史 |
 | GET, POST | `/dsh-hot-restart/restart` | 触发热重启：立即回 200，随后在后台对账插件树 |
 | POST | `/dsh-hot-restart/report` | 客户端回执：把页面上注入到的行（`outerHTML`）落进包内的 `report.json` |
+| GET | `/dsh-hot-restart/diagnose` | 只读诊断：我们这条 client 行在宿主图里的 `rev`/`url`，以及 `fetchBundle` 取回来的 bundle 状态、长度、能否解析、是否注册了正确 id |
 
 排查时直接开 `http://127.0.0.1:<port>/dsh-hot-restart/status` 即可。
 
