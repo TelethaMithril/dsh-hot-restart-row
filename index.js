@@ -41,7 +41,7 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.7'
+export const VERSION = '0.2.8'
 
 /** 注入到 index.html 的自愈脚本的标记，用来判断是否已经注过。 */
 export const BOOT_GUARD_MARK = 'data-dsh-hot-restart-boot-guard'
