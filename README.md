@@ -4,6 +4,30 @@
 
 菜单原本是 `设置 / 意见反馈 / 退出登录` 三行；现在变成四行，第四行就是这只按钮。
 
+## 已修复：`web boot: N entries did not activate` / `import failed`（0.2.7）
+
+**如果你在 0.2.6 或更早的版本上遇到过下面这种启动失败，升级到 0.2.7 即可彻底解决：**
+
+```text
+DeepSeek Harness 无法使用
+应用无法启动或已意外停止。
+web boot: 1 entry did not activate
+dsh-hot-restart-row: import failed (see console for the import error)
+```
+
+原因：0.2.6 及更早的版本带了一个 `dsh.client` 半边。client 条目在 DSH 的启动关键路径上
+（`entries.start` 里任何一个条目没立起来，整窗就报「应用无法启动」），而我们那一半只负责
+账号菜单里的一行。崩溃日志里 `importError` 为空、而 `report.json` 里又能看到
+`client-apply` 回执 —— 说明 bundle 没坏、模块也执行了，坏的是启动阶段的条目时序。
+
+修法（0.2.7）：**删掉 `dsh.client`**，菜单代码改为 `runtime/menu.js`，由宿主用
+`webServer.tapIndex()` 作为普通行内脚本注入 `</body>` 之前。页面必然执行它，
+失败最多是菜单里少一行 —— 本插件从此不可能再让 web boot 失败。
+
+升级后自检：`GET /dsh-hot-restart/status` 里 `version` 应是 `0.2.7` 或更高；
+`report.json` 里应出现 `menu-watch` / `menu-injected` 回执（来自注入脚本），且不再有
+`client-apply`。
+
 ## 和市场上那个同名插件不是一回事
 
 列表里已经有一个 [`xiaolu511/dsh-hot-restart`](https://github.com/xiaolu511/dsh-hot-restart)
@@ -154,6 +178,10 @@ dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main
 ```
 
 ## 变更记录
+
+- **0.2.8** — 只改文档：README 顶部新增「已修复：`web boot: N entries did not activate` /
+  `import failed`（0.2.7）」一节，写清症状、根因（client 半边在启动关键路径上）与修法，
+  并给出升级后的自检方法。代码与 0.2.7 相同。
 
 - **0.2.7** — 删掉 `dsh.client` 半边，把菜单代码挪到 `runtime/menu.js`，由宿主用
   `webServer.tapIndex()` 作为普通行内脚本注入 `</body>` 之前。原因：client 条目在
