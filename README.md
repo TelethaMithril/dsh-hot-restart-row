@@ -76,6 +76,10 @@ DSH 没有“重启进程”的 API（`agents` / `sessions` / `agentPresets` 都
   否则按钮显示失败、页面不动——宁可让人再点一次，也不让页面带着 404 启动。
 - 按钮没有 React 状态可借，进度直接写在 `data-phase`（`idle / busy / failed`）+ 行文案上，
   失败 3 秒后回到 `idle`。
+- **首页自愈脚本**（0.2.5）：`webServer.tapIndex()` 把一段同步脚本插到 `</head>` 之前。
+  它用捕获阶段的 `error` 监听接住任何 `/plugins/…` 分包的加载失败，然后重载页面
+  （新页面拿的是当前 rev）。`sessionStorage` 计数限流 2 次/60 秒，避免真坏掉时无限刷新；
+  每次触发都会往 `POST /dsh-hot-restart/report` 记一条 `kind: "boot-guard"`。
 
 ## 安装
 
@@ -147,6 +151,11 @@ dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main
 
 ## 变更记录
 
+- **0.2.5** — 首页注入一段自愈脚本：`/plugins/…&rev=…` 的分包脚本加载失败时，
+  带当前 rev 自动重载一次（`sessionStorage` 限流：60 秒内最多 2 次，之后交回 DSH 自己的报错）。
+  这一条不依赖本插件的按钮 —— 市场装完插件后自己的 `location.reload()`、或任何插件
+  在对账中途换图，都可能让页面带着过期 rev 起来并卡在「应用无法启动」，
+  现在它会自己重试一次。脚本在 `</head>` 之前、经典脚本、同步执行，早于 deferred 入口模块。
 - **0.2.4** — 刷新前先等插件图稳定、并预热全部 client bundle；任何一步失败都不刷新页面。
 - **0.2.3** — 重启进度改挂 `globalThis`：对账过程中本模块若被重新 import，模块级变量会归零、客户端就永远等不到自己的 ticket；挂全局后重载也读得到。
 - **0.2.2** — 修掉一个会让 DSH 起不来的竞态：以前 `POST /restart` 回完 200，页面固定
