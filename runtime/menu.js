@@ -14,9 +14,9 @@
  */
 (function () {
   if (window.__DSH_HOT_RESTART_MENU__) return
-  window.__DSH_HOT_RESTART_MENU__ = 'v0.2.7'
+  window.__DSH_HOT_RESTART_MENU__ = 'v0.2.9'
 
-  var VERSION = 'v0.2.7'
+  var VERSION = 'v0.2.9'
   var RESTART_URL = '/dsh-hot-restart/restart'
   var STATUS_URL = '/dsh-hot-restart/status'
   var REPORT_URL = '/dsh-hot-restart/report'
