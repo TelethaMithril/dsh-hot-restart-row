@@ -41,7 +41,7 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.8'
+export const VERSION = '0.2.9'
 
 /** 注入到 index.html 的自愈脚本的标记，用来判断是否已经注过。 */
 export const BOOT_GUARD_MARK = 'data-dsh-hot-restart-boot-guard'
@@ -363,7 +363,10 @@ function statusPayload(ctx) {
   const current = state().lastRun
   payload.lastRun = current === null ? null : { ...current }
 
-  // 自愈脚本是否已经在首页里露过面（宿主要渲染过一次 index.html 才为 true）。
+  // 注入表是否被收集过（桌面壳在 ready 时会收集一次；浏览器渲染首页也会）。
+  payload.injections = { ...injectionStats, lastRows: [...injectionStats.lastRows] }
+
+  // 兼容旧字段：自愈脚本是否已经在注入表里露过面。
   payload.bootGuard = { injected: didReportGuard }
 
   // 非空说明这次装配抛过错（插件仍然被加载，只是可能缺路由）。
@@ -592,6 +595,30 @@ export function injectMenuScript(html) {
   return end === -1 ? `${html}${tag}` : `${html.slice(0, end)}${tag}${html.slice(end)}`
 }
 
+/** 注入表被收集过几次、每次推了几行（供 /status 自检，不含脚本文本）。 */
+const injectionStats = { collections: 0, lastRows: /** @type {Array<{ kind: string, placement: string, length: number }>} */ ([]) }
+
+/**
+ * 本插件贡献给首页的结构化注入行。
+ *
+ * 为什么不再用 tapIndex：桌面 App 的窗口根本不经过 Host 的 HTTP index ——
+ * `dsh-app://app/` 由 Electron 主进程直接读打包好的 dist/index.html，只补一句
+ * `__DSH_BOOT_READY__`，所以 tapIndex 拼出来的 HTML 只有浏览器直连时能看到。
+ * 桌面壳真正用的通道是 Host 在 ready 时发过去的 `injections`，它来自
+ * `webServer.collectIndexInjections(peer)` —— 也就是各家插件在
+ * `webserver/index-inject` 事件里 push 的行；页面侧由 dsh-web-frontend 的
+ * `iG(rows)` 逐行执行。这里就往那张表里加两行普通脚本。
+ *
+ * @returns {Array<Record<string, unknown>>} 注入行。
+ */
+export function indexInjections() {
+  /** @type {Array<Record<string, unknown>>} */
+  const rows = []
+  if (BOOT_GUARD_SCRIPT.length > 0) rows.push({ kind: 'script', placement: 'head', text: BOOT_GUARD_SCRIPT })
+  if (MENU_SCRIPT.length > 0) rows.push({ kind: 'script', placement: 'body', text: MENU_SCRIPT })
+  return rows
+}
+
 /**
  * 插件主体。
  * @param {import('@deepseek-ai/cordis').Context} ctx 插件上下文。
@@ -699,11 +726,36 @@ function activate(child) {
         }),
       )
 
-      // ── 自愈：把 head 脚本注入首页，分包 404 时带新 rev 自动重载一次 ──
-      disposers.push(child.webServer.tapIndex(injectBootGuard))
-
-      // ── 菜单：把页面上那一半边直接注入首页（不走 client 模块加载器） ──
-      disposers.push(child.webServer.tapIndex(injectMenuScript))
+      // ── 页面那一半：走结构化 index 注入 ──
+      //
+      // 桌面 App 的窗口不经过 Host 的 index 渲染（`dsh-app://` 直接读 dist），
+      // tapIndex 拼出的 HTML 到不了那里。Host 在 ready 时把
+      // `collectIndexInjections(peer)` 得到的表发给桌面壳，壳再交给页面里的
+      // `iG(rows)` 逐行执行 —— 这是桌面窗口唯一的注入通道；浏览器直连走
+      // renderIndex，同一张表同样生效。
+      const offInject = child.on('webserver/index-inject', (table) => {
+        if (!Array.isArray(table)) return
+        const rows = indexInjections()
+        for (const row of rows) table.push(row)
+        injectionStats.collections += 1
+        injectionStats.lastRows = rows.map((row) => ({
+          kind: String(row.kind),
+          placement: String(row.placement),
+          length: String(row.text ?? '').length,
+        }))
+        if (!didReportGuard && rows.length > 0) {
+          didReportGuard = true
+          try {
+            appendReport({
+              receivedAt: new Date().toISOString(),
+              payload: { kind: 'index-inject-collected', version: VERSION, rows: injectionStats.lastRows },
+            })
+          } catch {
+            // 落盘失败不影响页面。
+          }
+        }
+      })
+      if (typeof offInject === 'function') disposers.push(offInject)
 
   return () => {
     for (const dispose of disposers) dispose()
