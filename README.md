@@ -28,6 +28,29 @@ dsh-hot-restart-row: import failed (see console for the import error)
 `report.json` 里应出现 `menu-watch` / `menu-injected` 回执（来自注入脚本），且不再有
 `client-apply`。
 
+## 已修复：桌面 App 里“菜单里没有这一行”（0.2.9）
+
+0.2.7/0.2.8 把页面那一半改成了 `webServer.tapIndex()` 注入首页。这在**浏览器直连**
+（地址栏打开 `http://127.0.0.1:<port>/`）时是对的，但在**桌面 App 窗口**里根本不会生效：
+
+- 桌面窗口加载的是 `dsh-app://app/`，这个协议由 Electron 主进程直接读打包好的
+  `dsh-web-frontend/dist/index.html`（只补一句 `__DSH_BOOT_READY__`），
+  **完全不经过 Host 的 `webServer.renderIndex()`**，所以 `tapIndex` 拼出来的 HTML 到不了那里。
+- 桌面壳真正使用的注入通道是：Host 在启动就绪时把
+  `webServer.collectIndexInjections(peer)` 得到的**结构化注入表**放进 `ready` IPC，
+  桌面壳存下来，每次页面加载通过 `dsh-desktop:boot` 交给前端，
+  前端再用 `iG(rows)` 逐行执行（`script` / `script-src` / `style` / `global` 等）。
+  这张表来自各插件在 `webserver/index-inject` 事件里 push 的行。
+
+0.2.9 因此改为：`ctx.on('webserver/index-inject', table => { … push 两行 script … })`，
+自愈脚本进 head、菜单脚本进 body。浏览器直连与桌面窗口从此走同一条通道。
+
+注意：注入表是**进程启动时**收集并缓存的，所以升级到 0.2.9 后需要**重启一次 App**，
+那一行才会出现（之后每次启动都在）。
+
+自检：`GET /dsh-hot-restart/status` 的 `injections` 应为
+`{collections: ≥1, lastRows: [{kind:"script",placement:"head",…},{kind:"script",placement:"body",…}]}`。
+
 ## 和市场上那个同名插件不是一回事
 
 列表里已经有一个 [`xiaolu511/dsh-hot-restart`](https://github.com/xiaolu511/dsh-hot-restart)
@@ -178,6 +201,13 @@ dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main
 ```
 
 ## 变更记录
+
+- **0.2.9** — 修掉「桌面 App 里菜单没有热重启行」。根因：桌面窗口走 `dsh-app://app/`
+  直接读 dist 的 index.html，不经过 Host 的 `renderIndex`，所以 0.2.7/0.2.8 的
+  `tapIndex` 注入只对浏览器直连生效。改为在 `webserver/index-inject` 事件里 push
+  `{kind:"script"}` 行（自愈脚本 head、菜单脚本 body），也就是 Host 发给桌面壳、
+  由前端 `iG(rows)` 执行的那张结构化注入表。升级后需重启一次 App（注入表在进程启动时收集）。
+  同时删掉 0.2.7 起遗留的临时诊断路由 `/dsh-hot-restart/_render`。
 
 - **0.2.8** — 只改文档：README 顶部新增「已修复：`web boot: N entries did not activate` /
   `import failed`（0.2.7）」一节，写清症状、根因（client 半边在启动关键路径上）与修法，
