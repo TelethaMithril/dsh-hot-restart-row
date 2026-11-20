@@ -41,7 +41,7 @@ export const RESTART_ROUTE = `${ROUTE_PREFIX}/restart`
 export const REPORT_ROUTE = `${ROUTE_PREFIX}/report`
 
 /** 与 package.json 的 version 保持一致。 */
-export const VERSION = '0.2.9'
+export const VERSION = '0.3.0'
 
 /** 注入到 index.html 的自愈脚本的标记，用来判断是否已经注过。 */
 export const BOOT_GUARD_MARK = 'data-dsh-hot-restart-boot-guard'
@@ -136,6 +136,44 @@ function summarizeReconciliation(result) {
   } catch (error) {
     return { unreadable: describe(error) }
   }
+}
+
+/**
+ * 从 `hmr.reconcileProfile()` 的结果里读出“哪些模块必须等一次真正的重启”。
+ *
+ * 对账失败会抛错，但**成功**也可能带回两种“没法就地换掉”的情况：
+ * `restartReason`（整个 profile 级别的重启理由）与 `pending`（这些模块在重启前
+ * 继续跑旧代码）。这两种情况下刷新页面毫无意义 —— 页面刷出来的还是旧代码，
+ * 用户却以为已经生效了。所以要把这个判断交给页面。
+ *
+ * @param {unknown} result 对账结果。
+ * @returns {{ needsRestart: boolean, restartReason: string | null, pending: Array<{ id: string, reason: string }> }}
+ */
+export function describeRestartNeed(result) {
+  /** @type {{ needsRestart: boolean, restartReason: string | null, pending: Array<{ id: string, reason: string }> }} */
+  const out = { needsRestart: false, restartReason: null, pending: [] }
+  if (result === null || typeof result !== 'object') return out
+  try {
+    const reason = /** @type {any} */ (result).restartReason
+    if (typeof reason === 'string' && reason.length > 0) {
+      out.needsRestart = true
+      out.restartReason = reason.slice(0, 500)
+    }
+    const pending = /** @type {any} */ (result).pending
+    if (Array.isArray(pending)) {
+      for (const item of pending.slice(0, 20)) {
+        if (item === null || typeof item !== 'object') continue
+        out.pending.push({
+          id: String(/** @type {any} */ (item).id ?? '?').slice(0, 200),
+          reason: String(/** @type {any} */ (item).reason ?? '').slice(0, 300),
+        })
+      }
+      if (out.pending.length > 0) out.needsRestart = true
+    }
+  } catch {
+    // 结果形状不认识就当作不需要重启，页面照旧刷新。
+  }
+  return out
 }
 
 /**
@@ -244,6 +282,9 @@ async function reconcileInBackground(ctx, ticket) {
     // 它自己不会加锁，会直接抛 "must run inside runExclusive"，所以这里必须套一层。
     const result = await hmr.runExclusive(async () => await hmr.reconcileProfile())
 
+    // 对账成功≠新代码生效：pending/restartReason 非空时必须真重启 App。
+    const restartInfo = describeRestartNeed(result)
+
     /** @type {any} */
     let clientModules
     try {
@@ -253,7 +294,10 @@ async function reconcileInBackground(ctx, ticket) {
     }
 
     if (clientModules === undefined || clientModules === null) {
-      finish(ticket, true, Date.now() - beganAt, summarizeReconciliation(result))
+      finish(ticket, true, Date.now() - beganAt, {
+        reconciliation: summarizeReconciliation(result),
+        ...restartInfo,
+      })
       return
     }
 
@@ -265,6 +309,7 @@ async function reconcileInBackground(ctx, ticket) {
     /** @type {Record<string, unknown>} */
     const detail = {
       reconciliation: summarizeReconciliation(result),
+      ...restartInfo,
       graph: settled,
       warm: { total: warm.total, ok: warm.ok, failed: warm.failed.slice(0, 8) },
     }
