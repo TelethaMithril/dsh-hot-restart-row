@@ -51,6 +51,27 @@ dsh-hot-restart-row: import failed (see console for the import error)
 自检：`GET /dsh-hot-restart/status` 的 `injections` 应为
 `{collections: ≥1, lastRows: [{kind:"script",placement:"head",…},{kind:"script",placement:"body",…}]}`。
 
+## 什么时候点热重启没用（0.3.0）
+
+对账**成功**也未必代表新代码生效：`hmr.reconcileProfile()` 会带回 `restartReason`
+与 `pending`（DSH 自己的日志写得很直白：`changed modules keep running their previous code
+until a restart`）。以前按钮在这种情况下照样刷新页面，页面刷出来还是旧代码，很容易让人
+以为已经生效。
+
+0.3.0 起：拿到 `lastRun.detail.needsRestart === true` 时**不刷新页面**，而是把按钮文案改成
+「需重启 App（N）」，鼠标悬停能看到 `restartReason` 与最多 5 个模块名，8 秒后自动复位；
+同时发一条 `menu-needs-restart` 回执到 `report.json`。
+
+需要真重启 App 的三类情况：
+
+1. 对账返回 `restartReason` / `pending`（原生插件、模块身份变化、依赖树结构性变动）；
+2. 改动落在**结构化注入表**上（`webserver/index-inject`，比如本插件自己的菜单行）——
+   桌面壳在 Host 启动时缓存了那张表（见上一节）；
+3. Electron 主进程或 DSH 本体升级。
+
+正常情况（普通插件换版本、改插件里的 JS）：点一下就够，Host 会按文件路径重新 `import`，
+`node_modules` 里内容换了就会重新加载，进程 pid 不变。
+
 ## 和市场上那个同名插件不是一回事
 
 列表里已经有一个 [`xiaolu511/dsh-hot-restart`](https://github.com/xiaolu511/dsh-hot-restart)
@@ -201,6 +222,11 @@ dsh plugin --profile desktop add "github:TelethaMithril/dsh-hot-restart-row#main
 ```
 
 ## 变更记录
+
+- **0.3.0** — 对账成功但存在“必须真重启才生效”的模块时（`pending` / `restartReason` 非空），
+  按钮不再刷新页面，而是显示「需重启 App（N）」，悬停可看模块名与原因，8 秒后复位，
+  并发 `menu-needs-restart` 回执。宿主侧新增 `describeRestartNeed()` 把判断写进
+  `lastRun.detail`；顺带把失败详情从 `[object Object]` 换成可读 JSON。
 
 - **0.2.9** — 修掉「桌面 App 里菜单没有热重启行」。根因：桌面窗口走 `dsh-app://app/`
   直接读 dist 的 index.html，不经过 Host 的 `renderIndex`，所以 0.2.7/0.2.8 的
