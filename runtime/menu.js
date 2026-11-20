@@ -14,9 +14,9 @@
  */
 (function () {
   if (window.__DSH_HOT_RESTART_MENU__) return
-  window.__DSH_HOT_RESTART_MENU__ = 'v0.2.9'
+  window.__DSH_HOT_RESTART_MENU__ = 'v0.3.0'
 
-  var VERSION = 'v0.2.9'
+  var VERSION = 'v0.3.0'
   var RESTART_URL = '/dsh-hot-restart/restart'
   var STATUS_URL = '/dsh-hot-restart/status'
   var REPORT_URL = '/dsh-hot-restart/report'
@@ -166,6 +166,57 @@
    * @param {HTMLElement} row 注入的那一行。
    * @returns {void}
    */
+  /**
+   * 对账成功了、但有模块必须等一次真正的重启：别刷新页面，改在按钮上说明。
+   *
+   * 刷新会让人以为新代码已经生效，实际跑的还是旧的 —— 这比什么都不做更容易误导。
+   * @param {Element} row 菜单行。
+   * @param {{ pending?: Array<{ id: string, reason: string }>, restartReason?: string | null }} detail 结果详情。
+   * @returns {void}
+   */
+  function showNeedRestart(row, detail) {
+    var pending = detail !== null && typeof detail === 'object' && Array.isArray(detail.pending) ? detail.pending : []
+    var count = pending.length
+    var reason = detail !== null && typeof detail === 'object' && typeof detail.restartReason === 'string' ? detail.restartReason : ''
+    var names = pending
+      .slice(0, 5)
+      .map(function (item) {
+        return item !== null && typeof item === 'object' ? String(item.id) : ''
+      })
+      .filter(function (name) {
+        return name !== ''
+      })
+    row.setAttribute('data-phase', 'blocked')
+    row.setAttribute('title', [reason].concat(names).filter(Boolean).join('\n') || '需要重启 App 才能换掉这些模块')
+    replaceRowText(
+      row,
+      count > 0 ? pick('需重启 App（' + count + '）', 'Restart app (' + count + ')') : pick('需重启 App', 'Restart app'),
+    )
+    report({ kind: 'menu-needs-restart', at: Date.now(), pending: names, restartReason: reason })
+    window.setTimeout(function () {
+      if (row.isConnected === false) return
+      row.setAttribute('data-phase', 'idle')
+      row.removeAttribute('title')
+      replaceRowText(row, pick('热重启', 'Hot restart'))
+    }, 8000)
+  }
+
+  /**
+   * 把失败详情压成一句能读的话。
+   * @param {unknown} detail 失败详情。
+   * @returns {string}
+   */
+  function failureText(detail) {
+    if (typeof detail === 'string') return detail
+    if (detail === null || detail === undefined) return 'unknown error'
+    try {
+      var text = JSON.stringify(detail)
+      return text.length > 300 ? text.slice(0, 300) + '…' : text
+    } catch (error) {
+      return String(detail)
+    }
+  }
+
   function runFromMenu(row) {
     if (row.getAttribute('data-phase') === 'busy') return
     row.setAttribute('data-phase', 'busy')
@@ -193,7 +244,12 @@
       })
       .then(function (run) {
         if (run !== null && run.ok === false) {
-          throw new Error('reconcile failed: ' + String(run.detail))
+          throw new Error('reconcile failed: ' + failureText(run.detail))
+        }
+        var detail = run !== null && typeof run === 'object' ? run.detail : null
+        if (detail !== null && typeof detail === 'object' && detail.needsRestart === true) {
+          showNeedRestart(row, detail)
+          return
         }
         replaceRowText(row, pick('正在刷新…', 'Reloading…'))
         window.setTimeout(function () {
